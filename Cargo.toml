@@ -14,11 +14,26 @@ documentation = "https://docs.rs/nmea/"
 readme = "README.md"
 edition = "2018"
 
-[dependencies]
-nom = "5"
-chrono = "0.4"
-arrayvec = "0.5"
+[dependencies.nom]
+version = "5"
+default-features = false
+
+[dependencies.chrono]
+version = "0.4"
+default-features = false
+
+[dependencies.arrayvec]
+version = "0.5"
+default-features = false
+
+[dependencies.libm]
+version = "0.2"
 
 [dev-dependencies]
 quickcheck = "0.9"
 approx = "0.3"
+
+[features]
+alloc = ["chrono/alloc"]
+std = ["arrayvec/std", "chrono/std", "nom/std"]
+default = ["std", "alloc"]

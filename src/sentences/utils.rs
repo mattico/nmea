@@ -1,5 +1,4 @@
 use core::str;
-
 use chrono::{NaiveDate, NaiveTime};
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take, take_until};
@@ -16,8 +15,8 @@ pub(crate) fn parse_hms(i: &[u8]) -> IResult<&[u8], NaiveTime> {
             map_res(take(2usize), parse_num::<u32>),
             map_parser(take_until(","), double),
         )),
-        |(hour, minutes, sec)| -> core::result::Result<NaiveTime, &'static str> {
-            if sec.is_sign_negative() {
+        |(hour, minutes, seconds)| -> core::result::Result<NaiveTime, &'static str> {
+            if seconds.is_sign_negative() {
                 return Err("Invalid time: second is negative");
             }
             if hour >= 24 {
@@ -26,14 +25,16 @@ pub(crate) fn parse_hms(i: &[u8]) -> IResult<&[u8], NaiveTime> {
             if minutes >= 60 {
                 return Err("Invalid time: min >= 60");
             }
-            if sec >= 60. {
+            if seconds >= 60. {
                 return Err("Invalid time: sec >= 60");
             }
+            let sec = libm::trunc(seconds);
+            let frac = seconds - sec;
             Ok(NaiveTime::from_hms_nano(
                 hour,
                 minutes,
-                sec.trunc() as u32,
-                (sec.fract() * 1_000_000_000f64).round() as u32,
+                sec as u32,
+                libm::round(frac * 1_000_000_000f64) as u32,
             ))
         },
     )(i)

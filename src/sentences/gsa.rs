@@ -1,8 +1,9 @@
+use core::num::NonZeroU8;
+
 use nom::branch::alt;
 use nom::bytes::complete::take_while1;
 use nom::character::complete::{char, one_of};
 use nom::combinator::{all_consuming, opt, value};
-use nom::multi::many0;
 use nom::number::complete::float;
 use nom::sequence::terminated;
 use nom::IResult;
@@ -27,17 +28,26 @@ pub enum GsaMode2 {
 pub struct GsaData {
     pub mode1: GsaMode1,
     pub mode2: GsaMode2,
-    pub fix_sats_prn: Vec<u32>,
+    pub fix_sats_prn: arrayvec::ArrayVec<[NonZeroU8; 12]>,
     pub pdop: Option<f32>,
     pub hdop: Option<f32>,
     pub vdop: Option<f32>,
 }
 
-fn gsa_prn_fields_parse(i: &[u8]) -> IResult<&[u8], Vec<Option<u32>>> {
-    many0(terminated(opt(number::<u32>), char(',')))(i)
+type Satellites = [Option<NonZeroU8>; 12];
+
+fn gsa_prn_fields_parse(mut i: &[u8]) -> IResult<&[u8], Satellites> {
+    let mut satellites = [None; 12];
+    let parse = terminated(opt(number::<NonZeroU8>), char(','));
+    for sat in &mut satellites {
+        let result = parse(i)?;
+        i = result.0;
+        *sat = result.1;
+    }
+    Ok((i, satellites))
 }
 
-type GsaTail = (Vec<Option<u32>>, Option<f32>, Option<f32>, Option<f32>);
+type GsaTail = (Satellites, Option<f32>, Option<f32>, Option<f32>);
 
 fn do_parse_gsa_tail(i: &[u8]) -> IResult<&[u8], GsaTail> {
     let (i, prns) = gsa_prn_fields_parse(i)?;
@@ -55,7 +65,7 @@ fn is_comma(x: u8) -> bool {
 
 fn do_parse_empty_gsa_tail(i: &[u8]) -> IResult<&[u8], GsaTail> {
     value(
-        (Vec::new(), None, None, None),
+        ([None; 12], None, None, None),
         all_consuming(take_while1(is_comma)),
     )(i)
 }
@@ -65,7 +75,7 @@ fn do_parse_gsa(i: &[u8]) -> IResult<&[u8], GsaData> {
     let (i, _) = char(',')(i)?;
     let (i, mode2) = one_of("123")(i)?;
     let (i, _) = char(',')(i)?;
-    let (i, mut tail) = alt((do_parse_empty_gsa_tail, do_parse_gsa_tail))(i)?;
+    let (i, tail) = alt((do_parse_empty_gsa_tail, do_parse_gsa_tail))(i)?;
     Ok((
         i,
         GsaData {
@@ -80,7 +90,7 @@ fn do_parse_gsa(i: &[u8]) -> IResult<&[u8], GsaData> {
                 '3' => GsaMode2::Fix3D,
                 _ => unreachable!(),
             },
-            fix_sats_prn: tail.0.drain(..).filter_map(|v| v).collect(),
+            fix_sats_prn: tail.0.iter().filter_map(|&x| x).collect(),
             pdop: tail.1,
             hdop: tail.2,
             vdop: tail.3,

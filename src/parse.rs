@@ -91,7 +91,6 @@ pub fn parse_nmea_sentence<'a>(
 pub enum ParseResult {
     GGA(GgaData),
     RMC(RmcData),
-    GSV(GsvData),
     GSA(GsaData),
     VTG(VtgData),
     GLL(GllData),
@@ -136,10 +135,6 @@ pub fn parse(xs: &[u8]) -> Result<ParseResult, NmeaError> {
             SentenceType::GGA => {
                 let data = parse_gga(nmea_sentence)?;
                 Ok(ParseResult::GGA(data))
-            }
-            SentenceType::GSV => {
-                let data = parse_gsv(nmea_sentence)?;
-                Ok(ParseResult::GSV(data))
             }
             SentenceType::RMC => {
                 let data = parse_rmc(nmea_sentence)?;

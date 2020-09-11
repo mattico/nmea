@@ -20,16 +20,20 @@
 // limitations under the License.
 //
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
 mod parse;
 mod sentences;
 
 pub use crate::parse::{
-    parse, GgaData, GllData, GsaData, GsvData, NmeaError, ParseResult, RmcData, RmcStatusOfFix,
+    parse, GgaData, GllData, GsaData, NmeaError, ParseResult, RmcData, RmcStatusOfFix,
     TxtData, VtgData, SENTENCE_MAX_LEN,
 };
 use chrono::{NaiveDate, NaiveTime};
-use core::{fmt, iter::Iterator, mem, ops::BitOr};
-use std::collections::HashMap;
+use core::{fmt, mem, ops::BitOr, num::NonZeroU8};
+use alloc::{format, borrow::ToOwned};
 
 /// NMEA parser
 #[derive(Default, Debug, Clone)]
@@ -47,9 +51,7 @@ pub struct Nmea {
     pub vdop: Option<f32>,
     pub pdop: Option<f32>,
     pub geoid_height: Option<f32>,
-    pub satellites: Vec<Satellite>,
-    pub fix_satellites_prns: Option<Vec<u32>>,
-    satellites_scan: HashMap<GnssType, Vec<Vec<Satellite>>>,
+    pub fix_satellites_prns: Option<arrayvec::ArrayVec<[NonZeroU8; 12]>>,
     required_sentences_for_nav: SentenceMask,
     last_fix_time: Option<NaiveTime>,
     last_txt: Option<TxtData>,
@@ -72,12 +74,7 @@ impl<'a> Nmea {
     /// println!("{}", nmea);
     /// ```
     pub fn new() -> Nmea {
-        // TODO: This looks ugly.
-        let mut n = Nmea::default();
-        n.satellites_scan.insert(GnssType::Galileo, vec![]);
-        n.satellites_scan.insert(GnssType::Gps, vec![]);
-        n.satellites_scan.insert(GnssType::Glonass, vec![]);
-        n
+        Nmea::default()
     }
 
     /// Constructs a new `Nmea` for navigation purposes.
@@ -146,11 +143,6 @@ impl<'a> Nmea {
         self.geoid_height
     }
 
-    /// Returns the height of geoid above WGS84
-    pub fn satellites(&self) -> Vec<Satellite> {
-        self.satellites.clone()
-    }
-
     fn merge_gga_data(&mut self, gga_data: GgaData) {
         self.fix_time = gga_data.fix_time;
         self.latitude = gga_data.latitude;
@@ -160,36 +152,6 @@ impl<'a> Nmea {
         self.hdop = gga_data.hdop;
         self.altitude = gga_data.altitude;
         self.geoid_height = gga_data.geoid_height;
-    }
-
-    fn merge_gsv_data(&mut self, data: GsvData) -> Result<(), NmeaError<'a>> {
-        {
-            let d = self
-                .satellites_scan
-                .get_mut(&data.gnss_type)
-                .ok_or(NmeaError::InvalidGnssType)?;
-            // Adjust size to this scan
-            d.resize(data.number_of_sentences as usize, vec![]);
-            // Replace data at index with new scan data
-            d.push(
-                data.sats_info
-                    .iter()
-                    .filter(|v| v.is_some())
-                    .map(|v| v.clone().unwrap())
-                    .collect(),
-            );
-            d.swap_remove(data.sentence_num as usize - 1);
-        }
-        self.satellites.clear();
-        for v in self.satellites_scan.values() {
-            for v1 in v {
-                for v2 in v1 {
-                    self.satellites.push(v2.clone());
-                }
-            }
-        }
-
-        Ok(())
     }
 
     fn merge_rmc_data(&mut self, rmc_data: RmcData) {
@@ -240,10 +202,6 @@ impl<'a> Nmea {
                 self.merge_gga_data(gga);
                 Ok(SentenceType::GGA)
             }
-            ParseResult::GSV(gsv) => {
-                self.merge_gsv_data(gsv)?;
-                Ok(SentenceType::GSV)
-            }
             ParseResult::RMC(rmc) => {
                 self.merge_rmc_data(rmc);
                 Ok(SentenceType::RMC)
@@ -266,8 +224,6 @@ impl<'a> Nmea {
 
     fn new_tick(&mut self) {
         let old = mem::take(self);
-        self.satellites_scan = old.satellites_scan;
-        self.satellites = old.satellites;
         self.required_sentences_for_nav = old.required_sentences_for_nav;
         self.last_fix_time = old.last_fix_time;
     }
@@ -281,10 +237,6 @@ impl<'a> Nmea {
         match parse(xs)? {
             ParseResult::GSA(gsa) => {
                 self.merge_gsa_data(gsa);
-                return Ok(FixType::Invalid);
-            }
-            ParseResult::GSV(gsv_data) => {
-                self.merge_gsv_data(gsv_data)?;
                 return Ok(FixType::Invalid);
             }
             ParseResult::VTG(vtg) => {
@@ -395,7 +347,7 @@ impl fmt::Display for Nmea {
             self.altitude
                 .map(|l| format!("{:.3}", l))
                 .unwrap_or_else(|| "None".to_owned()),
-            self.satellites()
+            self.fix_satellites()
         )
     }
 }
@@ -565,7 +517,6 @@ define_sentence_type_enum!(
         GRS,
         GSA,
         GST,
-        GSV,
         GTD,
         GXA,
         HDG,
